@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Twitch Prediction Popup</title>
+  <style>
+    body {
+      margin: 0;
+      background: transparent;
+      overflow: hidden;
+    }
+    #popup {
+      display: none;
+      position: absolute;
+      top: 30%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #9147ff;
+      color: #fff;
+      padding: 2em 3em;
+      border-radius: 1em;
+      font-size: 2em;
+      box-shadow: 0 0 2em #9147ff77;
+      z-index: 100;
+      text-align: center;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="popup">Prediction Started!</div>
+  <script>
+    // ====== USER CONFIGURATION ======
+    const CLIENT_ID = "xijnbdmsqg1qcwwrtl0l1v5ium1dbs"; // Replace with your Client ID
+    const OAUTH_TOKEN = "znc9upape27qg7juitvulzhux3360s"; // Replace with your OAuth Access Token
+    const BROADCASTER_LOGIN = "msacarade"; // Your Twitch username, lowercase
+
+    // ====== POPUP FUNCTION ======
+    function showPopup(text) {
+      const popup = document.getElementById('popup');
+      popup.textContent = text;
+      popup.style.display = 'block';
+      setTimeout(() => { popup.style.display = 'none'; }, 5000);
+    }
+
+    // ====== TWITCH EVENTSUB WEBSOCKET ======
+    async function getUserId() {
+      // Get your user ID from Twitch API
+      const resp = await fetch("https://api.twitch.tv/helix/users?login=" + BROADCASTER_LOGIN, {
+        headers: {
+          "Client-ID": CLIENT_ID,
+          "Authorization": "Bearer " + OAUTH_TOKEN
+        }
+      });
+      const data = await resp.json();
+      if (data.data && data.data.length > 0) {
+        return data.data[0].id;
+      }
+      throw new Error("Could not fetch user ID");
+    }
+
+    async function connectEventSub(userId) {
+      const ws = new WebSocket("wss://eventsub.wss.twitch.tv/ws");
+
+      ws.onmessage = async (event) => {
+        const message = JSON.parse(event.data);
+
+        if (message.metadata && message.metadata.message_type === "session_welcome") {
+          // Subscribe to prediction events for your channel
+          const sessionId = message.payload.session.id;
+          const response = await fetch("https://api.twitch.tv/helix/eventsub/subscriptions", {
+            method: "POST",
+            headers: {
+              "Client-ID": CLIENT_ID,
+              "Authorization": "Bearer " + OAUTH_TOKEN,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              type: "channel.prediction.begin",
+              version: "1",
+              condition: { broadcaster_user_id: userId },
+              transport: {
+                method: "websocket",
+                session_id: sessionId
+              }
+            })
+          });
+          // Optionally, subscribe to "channel.prediction.lock" and "channel.prediction.end" as well
+        }
+
+        if (message.metadata && message.metadata.message_type === "notification") {
+          if (message.payload && message.payload.subscription && message.payload.subscription.type === "channel.prediction.begin") {
+            showPopup("Prediction Started!");
+          }
+        }
+      };
+
+      ws.onclose = () => {
+        // Try to reconnect after a delay
+        setTimeout(() => connectEventSub(userId), 5000);
+      };
+
+      ws.onerror = (err) => {
+        console.error("WebSocket error:", err);
+      };
+    }
+
+    // ====== MAIN ======
+    (async () => {
+      try {
+        const userId = await getUserId();
+        connectEventSub(userId);
+      } catch (e) {
+        showPopup("Error: " + e.message);
+      }
+    })();
+  </script>
+</body>
+</html>
